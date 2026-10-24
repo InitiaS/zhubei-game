@@ -7,7 +7,7 @@
 
 ## 在线试玩
 
-GitHub Pages：<https://Sompany.github.io/zhubei-game/>
+GitHub Pages：<https://InitiaS.github.io/zhubei-game/>
 
 ## 玩法
 
@@ -25,7 +25,7 @@ GitHub Pages：<https://Sompany.github.io/zhubei-game/>
 ## 本地运行
 
 ```bash
-git clone https://github.com/Sompany/zhubei-game.git
+git clone https://github.com/InitiaS/zhubei-game.git
 cd zhubei-game
 open index.html          # macOS
 ```
