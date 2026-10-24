@@ -76,6 +76,44 @@
   .cut.on{opacity:1;pointer-events:auto;cursor:pointer;}
   .cut b{color:var(--bronze-l);}
 
+  /* ---------- 拾获考证条：每钩起一样，小人右侧弹一条 ---------- */
+  .lore{
+    position:absolute;left:52%;top:14.5%;
+    max-width:37%;
+    display:flex;align-items:flex-start;gap:8px;
+    padding:7px 12px 8px 9px;
+    border-radius:8px;
+    background:linear-gradient(180deg,rgba(12,22,18,.93),rgba(6,12,10,.95));
+    border:1px solid rgba(185,133,68,.38);
+    box-shadow:0 10px 28px rgba(0,0,0,.55),inset 0 0 24px rgba(232,192,122,.05);
+    opacity:0;transform:translateX(-10px);
+    transition:opacity .26s ease,transform .26s ease;
+    pointer-events:none;z-index:3;
+  }
+  .lore.on{opacity:1;transform:none;}
+  /* 指向小人的小尖角 */
+  .lore::before{
+    content:"";position:absolute;left:-5.5px;top:15px;
+    width:9px;height:9px;transform:rotate(45deg);
+    background:rgba(10,19,15,.96);
+    border-left:1px solid rgba(185,133,68,.38);
+    border-bottom:1px solid rgba(185,133,68,.38);
+  }
+  .lc-tag{
+    flex:0 0 auto;margin-top:2px;
+    font-style:normal;font-size:9px;line-height:15px;letter-spacing:.06em;
+    padding:0 5px;border-radius:3px;
+    color:#0a1310;background:linear-gradient(180deg,#e8c07a,#b98544);
+  }
+  .lc-body{min-width:0;}
+  .lc-name{
+    font-family:var(--f-serif);font-size:12px;line-height:1.45;
+    color:var(--bronze-l);letter-spacing:.08em;
+  }
+  .lc-txt{
+    font-size:11px;line-height:1.68;color:#b9ccc1;letter-spacing:.03em;
+  }
+
   .mute{
     position:absolute;right:14px;bottom:14px;
     width:32px;height:32px;border-radius:50%;
@@ -114,7 +152,8 @@
      不支持 zoom 的浏览器会整段忽略，退化成原字号，不影响可用性。 */
   @supports (zoom:1.2){
     #stage > .hud,#stage > .ltally,#stage > .cut,
-    #stage > .mute,#stage > .fsBtn,#stage > .brand,#stage > .ov{
+    #stage > .mute,#stage > .fsBtn,#stage > .brand,#stage > .ov,
+    #stage > .lore{
       zoom:var(--k);
     }
   }
@@ -539,6 +578,13 @@
   <div class="ltally" id="liveTally"></div>
 
   <div class="cut" id="cutTip">点此／按 <b>X</b> 断绳 · 剩 <b id="cutN">1</b></div>
+  <div class="lore" id="loreTip">
+    <i class="lc-tag" id="loreTag"></i>
+    <div class="lc-body">
+      <div class="lc-name" id="loreName"></div>
+      <div class="lc-txt" id="loreTxt"></div>
+    </div>
+  </div>
   <div class="mute" id="muteBtn">♪</div>
   <div class="fsBtn" id="fsBtn" title="全屏（F）">⛶</div>
 
@@ -1139,6 +1185,7 @@ function ovShow(id){
   });
   // 离开对局回到菜单 / 结算，乐声回慢板
   if(id !== 'ovClear') musicSet('calm');
+  hideLore();
   stopLoop();
   fxList = []; fxIdx = -1;
   setTimeout(function(){
@@ -2135,10 +2182,83 @@ function updateBounty(dt){
 }
 
 /* ---------------- update ---------------- */
+/* 每钩起一样，就在小人右侧弹一条：属性标签 + 一句考证，
+   一次只说一个细节。同一类物件轮着说，抓得越多说法越多，
+   两三次之后回头看，九类物件的来历就都听完了。 */
+const LORE = {
+  cowrie:{ tag:'货币', lines:[
+    '印度洋来的黄宝螺，滇人拿它当钱使。',
+    '李家山八座大墓出海贝三百余公斤、约十一万枚。',
+    '刻纹铜片记着：十枚贝可换一只虎。'
+  ]},
+  ring:{ tag:'货币', lines:[
+    '背上一圈金环，是云南出土海贝里的主力。',
+    '云南出土贝币以环纹货贝为主，货贝反而较少。',
+    '产自印度洋，经蜀身毒道翻山越岭进来。'
+  ]},
+  tiger:{ tag:'稀见贝', lines:[
+    '花纹最艳、个头最大，属零星出土的稀见贝。',
+    '不是货币主体，多作佩饰与珍藏。',
+    '滇墓里的虎斑宝贝只见少量。'
+  ]},
+  conch:{ tag:'螺片饰', lines:[
+    '李家山 M51、M68 出土二十六片螺片饰件。',
+    '把海螺磨成圆片、中间穿孔，镶在金腰带上。',
+    '有的圆片里还嵌着绿松石。'
+  ]},
+  bead:{ tag:'外来重宝', lines:[
+    '原产印度河流域，经西南丝路输入滇国。',
+    '上万个石珠里，蚀花的只有两颗。',
+    '白色弦纹是人工腐蚀出来的，不是天生的。'
+  ]},
+  tin:{ tag:'原料', lines:[
+    '《汉书》记益州郡「律高西石空山出锡」。',
+    '滇青铜是铜锡铅三元合金，锡定硬度。',
+    '北大检测：李家山多件器物用过镀锡工艺。'
+  ]},
+  pot:{ tag:'日用器', lines:[
+    '滇人日常盛器，随葬普遍，不算贵重。',
+    '滇人住干栏式房屋，陶罐是家里最常见的器。',
+    '装贝用的是青铜贮贝器，不是陶罐。'
+  ]},
+  stone:{ tag:'配重', lines:[
+    '场上最沉、最不值钱——这是游戏的配重。',
+    '滇墓随葬石器仅二十一件，且多有实用用途。',
+    '钩到它只能认栽，趁早断绳还来得及。'
+  ]},
+  drum:{ tag:'国之重器', lines:[
+    'M51 三骑士铜鼓：鼓面立三骑一牛。',
+    '铜鼓是「国之重器」，击鼓以告神灵、召民众。',
+    '贮贝器兴起后，渐取代铜鼓成滇国重器。'
+  ]}
+};
+const loreSeen = {};
+let loreTimer = 0;
+function showLore(type){
+  const L = LORE[type], tip = $('loreTip');
+  if(!L || !tip) return;
+  if(activeOverlay()) return;    // 结算 / 暂停 / 菜单在场时不弹，免得压在遮罩下
+  const i = loreSeen[type] = ((loreSeen[type] || 0) + 1) % L.lines.length;
+  $('loreTag').textContent = L.tag;
+  $('loreName').textContent = typeName(type);
+  $('loreTxt').textContent = L.lines[i];
+  tip.classList.remove('on');
+  void tip.offsetWidth;          // 跺一下重排，让淡入动画每次都从头播
+  tip.classList.add('on');
+  clearTimeout(loreTimer);
+  loreTimer = setTimeout(function(){ tip.classList.remove('on'); }, 3200);
+}
+function hideLore(){
+  clearTimeout(loreTimer);
+  const tip = $('loreTip');
+  if(tip) tip.classList.remove('on');
+}
+
 function collect(o){
   o.dead = true;
   G.score += o.val;
   G.tally[o.type] = (G.tally[o.type] || 0) + 1;
+  showLore(o.type);           // 小人右侧立刻上一条考证
   G.streak = (G.streak || 0) + 1;
   G.shake = Math.min(6, 2 + o.w*0.35);
   const v = o.val;
@@ -3631,6 +3751,7 @@ window.__ZB__ = {
   focusIdx:function(){ return fxIdx; },
   focusList:function(){ return fxList; },
   buildLevel:buildLevel, SPAWN_RATE:SPAWN_RATE,
+  showLore:showLore, hideLore:hideLore, LORE:LORE, collect:collect,
   fit:fit, stageScale:function(){ return getComputedStyle(document.getElementById('stage')).getPropertyValue('--k').trim(); }
 };
 render();
