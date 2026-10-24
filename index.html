@@ -27,8 +27,13 @@
   }
   #stage{
     position:relative;
-    width:min(96vw,1100px,calc((100vh - 28px) * 1.4516));
+    /* 自适应铺满：宽度取「视口宽 98%」与「按高度换算出的 900:620」两者的较小值。
+       这里刻意不再写像素上限——浏览器一最大化，舞台就跟着窗口长到最大，
+       比例恒定 900:620，画面不会被拉伸变形。--k 是舞台相对设计基准的放大系数，
+       舞台内的 DOM 文字按钮靠它等比放大（见下面 @supports 段）。 */
+    width:min(98vw, calc((100vh - 16px) * 1.451613));
     aspect-ratio:900/620;
+    --k:1;
     border-radius:14px;
     overflow:hidden;
     box-shadow:0 0 0 1px rgba(185,133,68,.30),0 24px 70px rgba(0,0,0,.75);
@@ -98,9 +103,20 @@
      作者样式压不过它，所以全屏给的是 <html>，舞台靠 body.fs 这个类重新量尺寸。 */
   body.fs{background:radial-gradient(circle at 50% 38%,#0b1814 0%,#050b09 58%,#010403 100%);}
   body.fs #stage{
-    width:min(100vw, calc(100vh * 1.4516));
-    height:min(100vh, calc(100vw / 1.4516));
+    width:min(100vw, calc(100vh * 1.451613));
+    height:min(100vh, calc(100vw / 1.451613));
     border-radius:0;box-shadow:none;
+  }
+
+  /* 舞台放大后，画布里的物件是矢量等比放大的，DOM 里的文字却是死像素，
+     不处理就会出现「越大字越小」的观感。这里按 --k 一并放大，两者比例始终一致。
+     只作用于舞台的直接子层，.brand 等嵌套元素不会被二次放大；
+     不支持 zoom 的浏览器会整段忽略，退化成原字号，不影响可用性。 */
+  @supports (zoom:1.2){
+    #stage > .hud,#stage > .ltally,#stage > .cut,
+    #stage > .mute,#stage > .fsBtn,#stage > .brand,#stage > .ov{
+      zoom:var(--k);
+    }
   }
 
   .ov{
@@ -676,13 +692,56 @@ function buildBG(){
   ctx = real;
   bgCache = off;
 }
+// 舞台相对设计基准（1100 CSS px 宽）的放大系数：DOM 文字靠它等比跟随舞台
+function stageW(){
+  try{
+    const st = document.getElementById('stage');
+    if(st && st.getBoundingClientRect){
+      return st.getBoundingClientRect().width || 0;
+    }
+  }catch(e){}
+  return 0;
+}
+function syncScale(){
+  const w = stageW() || 1100;
+  const k = Math.min(Math.max(w / 1100, 1), 1.6);
+  try{
+    const st = document.getElementById('stage');
+    if(st && st.style && typeof st.style.setProperty === 'function'){
+      st.style.setProperty('--k', (Math.round(k * 1000) / 1000).toFixed(3));
+    }
+  }catch(e){}
+}
 function fit(){
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
-  cvs.width = W * DPR; cvs.height = H * DPR;
+  syncScale();
+  // 后备缓冲的像素比按「舞台实际 CSS 宽度」折算，最大化后才不会糊；
+  // 上限 2.6 倍超采样、总量 420 万像素封顶，4K 全屏也不至于每帧重绘到掉帧；
+  // 下界固定为每个 CSS 像素一个画布像素，常规分辨率下不会被压糊。
+  const cssW = stageW() || 1100;
+  const floorScale = cssW / W;
+  let scale = Math.min((window.devicePixelRatio || 1) * floorScale, 2.6);
+  scale = Math.max(scale, floorScale);
+  const MAXPX = 4.2e6;
+  if(W * H * scale * scale > MAXPX) scale = Math.sqrt(MAXPX / (W * H));
+  DPR = Math.max(scale, 0.7);
+  cvs.width = Math.round(W * DPR); cvs.height = Math.round(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   buildBG();
 }
-window.addEventListener('resize', fit);
+// 窗口缩放 / 全屏切换 / 舞台自身尺寸变化（最大化、侧栏弹出）都要重新量一次；
+// 用 rAF 合帧，拖拽窗口边缘时不会每一像素都重建一次背景缓存。
+let fitQueued = false;
+function fitSoon(){
+  if(fitQueued) return;
+  fitQueued = true;
+  requestAnimationFrame(function(){ fitQueued = false; fit(); });
+}
+window.addEventListener('resize', fitSoon);
+window.addEventListener('orientationchange', fitSoon);
+document.addEventListener('fullscreenchange', fitSoon);
+if(window.ResizeObserver){
+  try{ new ResizeObserver(fitSoon).observe(document.getElementById('stage')); }catch(e){}
+}
 
 const C = {
   bronze:'#8a5f30', bronze2:'#c08f4e', bronze3:'#e8c07a',
@@ -1026,6 +1085,9 @@ function place(type){
   return null;
 }
 
+// 初始投放只给设计量的 75%：一开局场地不至于挤得太满，也给马队补货留出空间
+const SPAWN_RATE = 0.75;
+
 function buildLevel(lv){
   G.objs = [];
   const plan = [
@@ -1039,6 +1101,23 @@ function buildLevel(lv){
     ['stone',  3 + Math.min(lv,2)],
     ['drum',   1 + Math.min(Math.floor(lv/3), 2)]
   ];
+  // 按 75% 折算：每类保底 1 件（珍稀物件不会因为取整彻底消失），
+  // 取整多出来的零头再从当前数量最多的那一类里扣，保证总量正好是设计量的 75%。
+  let raw = 0, sum = 0;
+  plan.forEach(function(p){
+    raw += p[1];
+    p[1] = Math.max(1, Math.round(p[1] * SPAWN_RATE));
+    sum += p[1];
+  });
+  const target = Math.round(raw * SPAWN_RATE);
+  while(sum > target){
+    let bi = -1;
+    for(let i=0;i<plan.length;i++){
+      if(plan[i][1] > 1 && (bi < 0 || plan[i][1] > plan[bi][1])) bi = i;
+    }
+    if(bi < 0) break;
+    plan[bi][1]--; sum--;
+  }
   const order = [];
   plan.forEach(function(p){ for(let i=0;i<p[1];i++) order.push(p[0]); });
   order.sort(function(){ return Math.random()-0.5; });
@@ -3550,7 +3629,9 @@ window.__ZB__ = {
   getName:function(){ return nameBuf; },
   setName:function(v){ nameBuf = String(v||'').slice(0,NAME_MAX); drawName(); renderOverBoard(); },
   focusIdx:function(){ return fxIdx; },
-  focusList:function(){ return fxList; }
+  focusList:function(){ return fxList; },
+  buildLevel:buildLevel, SPAWN_RATE:SPAWN_RATE,
+  fit:fit, stageScale:function(){ return getComputedStyle(document.getElementById('stage')).getPropertyValue('--k').trim(); }
 };
 render();
 requestAnimationFrame(padLoop);
